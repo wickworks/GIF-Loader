@@ -164,7 +164,8 @@ Class GifReader
 			
 			Local bitsToCopy:Int = Min((codeSize-i),(8-latestBitIndex))
 			
-			code |= ((latestByte Shr latestBitIndex) & ( blockMask[bitsToCopy] ))  Shl i
+			'code |= ((latestByte Shr latestBitIndex) & ( blockMask[bitsToCopy] ))  Shl i
+			code |= ((latestByte Shr latestBitIndex) & ( $FFFF Shr (16-bitsToCopy) ))  Shl i
 		
 			latestBitIndex += bitsToCopy
 			i += bitsToCopy
