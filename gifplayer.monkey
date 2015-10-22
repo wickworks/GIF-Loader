@@ -34,11 +34,10 @@ Class GIFPlayer
       
 			'Draw previousFrames if have
 			For Local i:Int = 0 To previousFrames.Length-1
-				'DrawImage(previousFrames.Get(i).img, (x/scaleX)+previousFrames.Get(i).left, (y/scaleY)+previousFrames.Get(i).top)
 				DrawImage(previousFrames.Get(i).GetImage(), (x+(previousFrames.Get(i).width/2)+previousFrames.Get(i).left),(y+(previousFrames.Get(i).height/2)+previousFrames.Get(i).top))
 			Next
+			
 			'Draw actual Frame
-			'DrawImage(actualFrame.img, (x/scaleX)+actualFrame.left, (y/scaleY)+actualFrame.top)
 			DrawImage(actualFrame.GetImage(), x+(actualFrame.width/2)+actualFrame.left,y+(actualFrame.height/2)+actualFrame.top)
   
 			'Check if should change frame

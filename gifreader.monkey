@@ -1,4 +1,5 @@
 Import mojo
+Import databuffer
 Import datastream
 Import gif
 
@@ -9,9 +10,7 @@ Class GifReader
   
 	Field gifDataStream:DataStream
 	Field gif:GIF
-	Field frame:GIFFrame 'Temporary frame
 	Field numberOfFrames:Int
-	Field tempGraphicControl:GraphicControlExtension 'Temporary
 	
 	Field loaded:Bool = False
   
@@ -30,37 +29,42 @@ Class GifReader
     
 		'-------------GIF Header-------------
 		'Load File
-		gifDataStream = New DataStream("monkey://data/" + fileName, False)
+		gifDataStream = New DataStream(DataBuffer.Load("monkey://data/" + fileName), 0)
 		gif = New GIF()
     
 		'Header Block
 		gif.Header_type = gifDataStream.ReadString(3)
 		gif.Header_version = gifDataStream.ReadString(3)
-		gif.Header_width = gifDataStream.ReadUInt(2)
-		gif.Header_height = gifDataStream.ReadUInt(2)
+		gif.Header_width = gifDataStream.ReadUShort()
+		gif.Header_height = gifDataStream.ReadUShort()
     
 		'Logical Screen Descriptor
-		Local Header_packedField := HexToBin(DecToHex(gifDataStream.ReadByte()))
-		If Header_packedField[..1] = 1
+		Local Header_packedField:Int = gifDataStream.ReadUByte()
+		
+		If Header_packedField & $80 <> 0
 			gif.Header_hasGlobalColorTable = True
 		Else
 			gif.Header_hasGlobalColorTable = False
 		Endif
-		gif.Header_colorResolution = Int(Header_packedField[1..4])
-		If Header_packedField[4..5] = 1
+		
+		gif.Header_colorResolution = (Header_packedField & $70) Shr 4
+		
+		If Header_packedField & $08 <> 0
 			gif.Header_sort = True
 		Else
 			gif.Header_sort = False
 		Endif
-		gif.Header_sizeGCT = Pow(2,1+BinToInt(Header_packedField[5..8]))
-		gif.Header_backgroundColorIndex = gifDataStream.ReadUInt(1)
-		gif.Header_pixelAspectRatio = (gifDataStream.ReadUInt(1) + 15) / 64
+		
+		gif.Header_sizeGCT = Pow(2, 1 + (Header_packedField & $07))
+		
+		gif.Header_backgroundColorIndex = gifDataStream.ReadUByte()
+		gif.Header_pixelAspectRatio = (gifDataStream.ReadUByte() + 15) / 64
     
 		'Global Color Table
 		If gif.Header_hasGlobalColorTable = True
 			Header_GCT = New Int[gif.Header_sizeGCT]
 			For Local i:Int = 0 Until gif.Header_sizeGCT
-				Header_GCT[i]=argb(gifDataStream.ReadUInt(1),gifDataStream.ReadUInt(1),gifDataStream.ReadUInt(1))
+				Header_GCT[i]=argb(gifDataStream.ReadUByte(), gifDataStream.ReadUByte(), gifDataStream.ReadUByte())
 			Next
 		Endif
     
@@ -86,6 +90,9 @@ Class GifReader
   
 	Method ReadFrames:Void()
 	
+		Local frame:GIFFrame 'Temporary frame
+		Local tempGraphicControlExtension:GraphicControlExtension = New GraphicControlExtension()
+	
 		Local nextByte:Int = gifDataStream.ReadUByte()
 		
 		While nextByte <> TRAILER_VALUE
@@ -97,7 +104,7 @@ Class GifReader
 					Case APP_EXT_LABEL
 						ApplicationExtension()
 					Case GRAPHICS_CONTROL_EXT_LABEL
-						GraphicsControlExtension()
+						tempGraphicControlExtension = ReadGraphicsControlExtension()
 					Case PLAIN_TEXT_EXT_LABEL
 						PlainTextExtension()
 					Case COMMENT_EXT_LABEL
@@ -105,18 +112,19 @@ Class GifReader
 				End
 				
 			Else
+				
 				'Create new Frame
-				frame=New GIFFrame(tempGraphicControl)
-				tempGraphicControl = Null
+				frame=New GIFFrame(tempGraphicControlExtension)
+				
 				gif.AddFrame(frame)
         
-				ReadImageDescriptor()
+				ReadImageDescriptor(frame)
 				
 				If frame.hasLCT
-					LocalColorTable()
+					LocalColorTable(frame)
 				End
 				
-				ImageData()
+				ImageData(frame)
 			End
 			
 			nextByte = gifDataStream.ReadUByte()
@@ -150,14 +158,8 @@ Class GifReader
 				
 				If subBlockSize = 0
 					subBlockSize = gifDataStream.ReadUByte()
-					'If subBlockSize < 0
-					'	subBlockSize += 256
-					'End
 				Endif
 				
-				'	If subBlockSize = -1
-				'		gifDataStream.SetPointer(gifDataStream.GetPointer() -1)
-				'	Endif
 			Endif
 			
 			Local bitsToCopy:Int = Min((codeSize-i),(8-latestBitIndex))
@@ -179,12 +181,12 @@ Class GifReader
 	Field codeTable:Int[][]
 	Field codeTablePointer:Int
 	
-	Method ImageData:Void()
+	Method ImageData:Void(frame:GIFFrame)
     
 		Local prevCode:Int
 		Local code:Int
 	
-		frame.LZW_MinimumCodeSize=gifDataStream.ReadUInt(1)+1
+		frame.LZW_MinimumCodeSize = gifDataStream.ReadUByte() + 1
 
 		'Initialize pixel Array
 		If( Not pixelsArray Or frame.width * frame.height > pixelsArray.Length )
@@ -196,8 +198,8 @@ Class GifReader
 		codeSize = frame.LZW_MinimumCodeSize
     
 		'Initialize code streamer
-		subBlockSize = gifDataStream.ReadUByte 'Int(1)
-		latestByte = gifDataStream.ReadUByte
+		subBlockSize = gifDataStream.ReadUByte()
+		latestByte = gifDataStream.ReadUByte()
 		
 		subBlockSize -=1
 		latestBitIndex = 0
@@ -300,7 +302,7 @@ Class GifReader
 				
 			End
 
-			If codeTablePointer = BinValues[codeSize] And codeSize < 12
+			If codeTablePointer = (1 Shl codeSize) And codeSize < 12
 				codeSize += 1
 			End
 
@@ -315,73 +317,99 @@ Class GifReader
 		'pixelsArray=[]
 	End
   
-	Method LocalColorTable:Void()
+	Method LocalColorTable:Void(frame:GIFFrame)
 		frame.LCT = New Int[frame.sizeLCT]
+		
 		For Local i:Int = 0 Until frame.sizeLCT
-			frame.LCT[i]=argb(gifDataStream.ReadUInt(1),gifDataStream.ReadUInt(1),gifDataStream.ReadUInt(1))
+			frame.LCT[i] = argb( gifDataStream.ReadUByte(), gifDataStream.ReadUByte(), gifDataStream.ReadUByte() )
 		Next
 	End
   	  
-	Method ReadImageDescriptor:Void()
-		frame.left = gifDataStream.ReadUInt(2)
-		frame.top = gifDataStream.ReadUInt(2)
-		frame.width = gifDataStream.ReadUInt(2)
-		frame.height = gifDataStream.ReadUInt(2)
-		Local packedField := HexToBin(DecToHex(gifDataStream.ReadByte()))
-		If packedField <> "00000000"
-			If packedField[..1] = 1 Then frame.hasLCT = True
-			If packedField[1..2] = 1 Then frame.interlace = True
-			If packedField[2..3] = 1 Then frame.sort = True
-			frame.sizeLCT = Pow(2,1+BinToInt(packedField[5..8]))
+	Method ReadImageDescriptor:Void(frame:GIFFrame)
+		frame.left = gifDataStream.ReadUShort()
+		frame.top = gifDataStream.ReadUShort()
+		frame.width = gifDataStream.ReadUShort()
+		frame.height = gifDataStream.ReadUShort()
+		
+		Local packedField:Int = gifDataStream.ReadUByte()
+		
+		If packedField <> 0
+			If packedField & $80 <> 0 
+				frame.hasLCT = True
+			End
+			
+			If packedField & $40 <> 0
+				frame.interlace = True
+			End
+			
+			If packedField & $20 <> 0 
+				frame.sort = True
+			End
+			
+			frame.sizeLCT = Pow(2, 1 + (packedField & $07))
+			
 		Endif
 	End
     
-	Method GraphicsControlExtension:Void()
+	Method ReadGraphicsControlExtension:GraphicControlExtension()
 		gifDataStream.ReadByte() 'Skip Byte size
-		tempGraphicControl = New GraphicControlExtension()
-		Local packedField := HexToBin(DecToHex(gifDataStream.ReadByte()))
-		tempGraphicControl.disposalMethod = BinToInt(packedField[3..6])
-		If packedField[6..7] = 1
+		Local tempGraphicControl:GraphicControlExtension = New GraphicControlExtension()
+		Local packedField:Int = gifDataStream.ReadUByte()
+		
+		tempGraphicControl.disposalMethod = (packedField & $1C) Shr 2 
+		
+		If packedField & $02 <> 0
 			tempGraphicControl.userInput = True
 		Else
 			tempGraphicControl.userInput = False
 		Endif
-		If packedField[7..8] = 1
+		
+		If packedField & 1 = 1
 			tempGraphicControl.transparentColor = True
 		Else
 			tempGraphicControl.transparentColor = False
 		Endif
 		
-		tempGraphicControl.delayTime = gifDataStream.ReadUInt(2)
+		tempGraphicControl.delayTime = gifDataStream.ReadUShort()
 		
-		tempGraphicControl.transparentColorIndex = gifDataStream.ReadUInt(1)
-		If gifDataStream.ReadByte() <> 0 Then Print "ERROR: Graphics Control Extension Problem"
+		tempGraphicControl.transparentColorIndex = gifDataStream.ReadUByte()
+		
+		If gifDataStream.ReadUByte() <> 0 
+			Print "ERROR: Graphics Control Extension Problem"
+		End
+		
+		Return tempGraphicControl
 	End
   
 	Method PlainTextExtension:Void()
-		gifDataStream.SetPointer(gifDataStream.GetPointer()+ BinToInt(HexToBin(gifDataStream.ReadByte())) ) 'TODO - I'm skipping for now
-		While gifDataStream.ReadByte() <> 0
-		Wend
+		gifDataStream.Seek(gifDataStream.GetOffset() + gifDataStream.ReadUByte() ) 'TODO - I'm skipping for now
+		While gifDataStream.ReadUByte() <> 0
+		End
 	End
   
 	Method ApplicationExtension:Void()
 		gif.Ext_Application = True
-		If gifDataStream.ReadByte <> 11 Then Print "ERROR: Application Extension Problem"
+		
+		If gifDataStream.ReadUByte() <> 11 
+			Print "ERROR: Application Extension Problem"
+		End
+		
 		gif.Ext_Application_Identifier = gifDataStream.ReadString(8)
 		gif.Ext_Application_Code = gifDataStream.ReadString(3)
-		While BinToInt(HexToBin(gifDataStream.ReadByte())) <> 0
-			gifDataStream.SetPointer(gifDataStream.GetPointer-1)
-			gifDataStream.SetPointer(gifDataStream.GetPointer()+ BinToInt(HexToBin(gifDataStream.ReadByte()))) 'TODO - I'm skipping for now
-		Wend
-		If gifDataStream.ReadByte() <> 0 Then Print "ERROR: Application Extension Problem"
+		
+		Local readCount:Int = gifDataStream.ReadUByte()
+		While readCount <> 0
+			gifDataStream.Seek( gifDataStream.GetOffset() + readCount )
+			readCount = gifDataStream.ReadUByte() 
+		End
 	End
  
 	Method CommentExtension:Void()
 		gif.Ext_Comment = True
 		gif.Ext_Comment_Comments = New Stack<String>
-		While BinToInt(HexToBin(gifDataStream.ReadByte())) <> 0
-			gifDataStream.SetPointer(gifDataStream.GetPointer-1)
-			gif.Ext_Comment_Comments.Push(gifDataStream.ReadString(gifDataStream.ReadByte()))
+		While gifDataStream.ReadUByte() <> 0
+			gifDataStream.Seek(gifDataStream.GetOffset()-1)
+			gif.Ext_Comment_Comments.Push(gifDataStream.ReadString(gifDataStream.ReadUByte()))
 		Wend
 	End
   
@@ -436,112 +464,3 @@ Function argb:Int(r:Int, g:Int, b:Int ,alpha:Int=255)
 	Return (alpha Shl 24) | (r Shl 16) | (g Shl 8) | b
 End
 
-Function DecToHex:String(dec:Int)
-	'Local r%=dec, s%, p%=32, n:Int[p/4+1]
-	Local r%=dec, s%, p%=8, n:Int[p/4+1]
-
-	While (p>0)
-		
-		s = (r&$f)+48
-		If s>57 Then s+=7
-		
-		p-=4
-		n[p Shr 2] = s
-		r = r Shr 4
-		 
-	Wend
-  
-	Return String.FromChars(n)
-End
-
-Function HexToBin:String(hex:String)
-	Local bin:String
-	For Local i:=0 Until hex.Length
-		Select hex[i..i+1]
-			Case "0"; bin += "0000"
-			Case "1"; bin += "0001"
-			Case "2"; bin += "0010"
-			Case "3"; bin += "0011"
-			Case "4"; bin += "0100"
-			Case "5"; bin += "0101"
-			Case "6"; bin += "0110"
-			Case "7"; bin += "0111"
-			Case "8"; bin += "1000"
-			Case "9"; bin += "1001"
-			Case "A"; bin += "1010"
-			Case "B"; bin += "1011"
-			Case "C"; bin += "1100"
-			Case "D"; bin += "1101"
-			Case "E"; bin += "1110"
-			Case "F"; bin += "1111"
-		End
-	Next
-	Return bin
-End
-
-Function HexToBin_Array:Int[](hex:String)
-	Local bin:= New Int[hex.Length*4]
-	Local binPointer:=0
-	For Local i:=0 Until hex.Length
-		Select hex[i..i+1]
-			Case "0"; bin[binPointer]=0; binPointer+=1;bin[binPointer]=0; binPointer+=1;bin[binPointer]=0; binPointer+=1;bin[binPointer]=0; binPointer+=1;'0000
-			Case "1"; bin[binPointer]=0; binPointer+=1;bin[binPointer]=0; binPointer+=1;bin[binPointer]=0; binPointer+=1;bin[binPointer]=1; binPointer+=1;'0001
-			Case "2"; bin[binPointer]=0; binPointer+=1;bin[binPointer]=0; binPointer+=1;bin[binPointer]=1; binPointer+=1;bin[binPointer]=0; binPointer+=1;'0010
-			Case "3"; bin[binPointer]=0; binPointer+=1;bin[binPointer]=0; binPointer+=1;bin[binPointer]=1; binPointer+=1;bin[binPointer]=1; binPointer+=1;'0011
-			Case "4"; bin[binPointer]=0; binPointer+=1;bin[binPointer]=1; binPointer+=1;bin[binPointer]=0; binPointer+=1;bin[binPointer]=0; binPointer+=1;'0100
-			Case "5"; bin[binPointer]=0; binPointer+=1;bin[binPointer]=1; binPointer+=1;bin[binPointer]=0; binPointer+=1;bin[binPointer]=1; binPointer+=1;'0101
-			Case "6"; bin[binPointer]=0; binPointer+=1;bin[binPointer]=1; binPointer+=1;bin[binPointer]=1; binPointer+=1;bin[binPointer]=0; binPointer+=1;'0110
-			Case "7"; bin[binPointer]=0; binPointer+=1;bin[binPointer]=1; binPointer+=1;bin[binPointer]=1; binPointer+=1;bin[binPointer]=1; binPointer+=1;'0111
-			Case "8"; bin[binPointer]=1; binPointer+=1;bin[binPointer]=0; binPointer+=1;bin[binPointer]=0; binPointer+=1;bin[binPointer]=0; binPointer+=1;'1000
-			Case "9"; bin[binPointer]=1; binPointer+=1;bin[binPointer]=0; binPointer+=1;bin[binPointer]=0; binPointer+=1;bin[binPointer]=1; binPointer+=1;'1001
-			Case "A"; bin[binPointer]=1; binPointer+=1;bin[binPointer]=0; binPointer+=1;bin[binPointer]=1; binPointer+=1;bin[binPointer]=0; binPointer+=1;'1010
-			Case "B"; bin[binPointer]=1; binPointer+=1;bin[binPointer]=0; binPointer+=1;bin[binPointer]=1; binPointer+=1;bin[binPointer]=1; binPointer+=1;'1011
-			Case "C"; bin[binPointer]=1; binPointer+=1;bin[binPointer]=1; binPointer+=1;bin[binPointer]=0; binPointer+=1;bin[binPointer]=0; binPointer+=1;'1100
-			Case "D"; bin[binPointer]=1; binPointer+=1;bin[binPointer]=1; binPointer+=1;bin[binPointer]=0; binPointer+=1;bin[binPointer]=1; binPointer+=1;'1101
-			Case "E"; bin[binPointer]=1; binPointer+=1;bin[binPointer]=1; binPointer+=1;bin[binPointer]=1; binPointer+=1;bin[binPointer]=0; binPointer+=1;'1110
-			Case "F"; bin[binPointer]=1; binPointer+=1;bin[binPointer]=1; binPointer+=1;bin[binPointer]=1; binPointer+=1;bin[binPointer]=1; binPointer+=1;'1111
-		End
-	Next
-	Return bin
-End
-
-Global BinValues:Int[] = [1,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192,16384,32768]
-
-Function BinToInt:Int(bin:String)
-	Local dec:Int
-	For Local i:int = 0 Until bin.Length
-		dec += Int(bin[bin.Length - i - 1 .. bin.Length - i]) * BinValues[i] 'Pow(2, i)
-	Next
-	Return dec
-End
-
-
-Function BinToInt:Int(bin:Int[])
-	Local dec:Int
-	For Local i:int = 0 Until 12
-		dec += bin[11 - i] * BinValues[i] 'Pow(2, i)
-	Next
-	Return dec
-End
-
-Function DecToBin:Int[](dec:Int)
-	Local result:Int
-	Local multiplier:Int
-	Local residue:Int
-	Local resultArr:Int[]=[0,0,0,0,0,0,0,0]
-	Local resultArrPointer:Int
-	multiplier = 1
-	While (dec > 0)
-		residue = dec Mod 2
-		result = result + residue * multiplier
-		dec = dec / 2
-		multiplier = multiplier * 10
-	Wend
-	resultArrPointer = 7
-	While result > 0
-		resultArr[resultArrPointer]=result Mod 10
-		result/=10
-		resultArrPointer-=1
-	Wend
-	Return resultArr
-End Function
