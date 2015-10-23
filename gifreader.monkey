@@ -306,10 +306,24 @@ Class GIFImageDecoder
 	
 	'ImageData Variables
 	Field codeSize:Int
-	Field codeEntries:Int[]
-	Field entryLengths:Int[]
-	Field codeTable:Int[]
+	
+	Global codeEntries:Int[]
+	Global codeEntriesSize:Int
+	Const CODE_ENTRIES_EXPAND_AMOUNT:Int = 4096
+					
+	Global entryLengths:Int[]
+	Global codeTable:Int[]
 	Field codeTablePointer:Int
+	
+	Method GetCodeEntry:Int( code:Int )
+		Return codeEntries[codeTable[code]]
+	End
+	
+	Method ExpandCodeEntries:Void()
+		codeEntriesSize += CODE_ENTRIES_EXPAND_AMOUNT
+		codeEntries = codeEntries.Resize(codeEntriesSize)
+		'Print "Resized code entries to: " + codeEntriesSize
+	End
 	
 	Method DecodeImageData:Void(dataStream:DataStream, frame:GIFFrame, canvasArray:Int[])
     
@@ -350,7 +364,7 @@ Class GIFImageDecoder
 		codeEntryIndex = codeTablePointer
 		
 		'Check if first value is equal to "Clear code"(CC)
-		If codeEntries[codeTable[GetCode( dataStream )]] <> CC
+		If GetCodeEntry(GetCode( dataStream )) <> CC
 			Print "ERROR: First code isn't the Clear code"
 		End
     
@@ -358,11 +372,14 @@ Class GIFImageDecoder
 		code = GetCode( dataStream )
 		prevCode = code
 		
-		colour = codeEntries[codeTable[code]]
+		colour = GetCodeEntry(code)
+		
 		If ( colour & $FF000000 <> 0 )
 			canvasArray[pixelsArrayPointer+frameIndex] = colour 
 		End
+		
 		frameIndex += 1
+		
 		If frameIndex = frameWidth
 			pixelsArrayPointer += canvasStride
 			frameIndex = 0
@@ -377,7 +394,7 @@ Class GIFImageDecoder
 			If code < codeTablePointer
 				'Yes
 				
-				Local firstCodeValue:Int = codeEntries[codeTable[code]]
+				Local firstCodeValue:Int = GetCodeEntry(code)
 				
 				'Is End of Information (EOI)
 				If firstCodeValue = EOI Then Exit
@@ -400,7 +417,7 @@ Class GIFImageDecoder
 					prevCode = GetCode( dataStream )
           
 					'Add to pixel stack
-					colour = codeEntries[codeTable[prevCode]]
+					colour = GetCodeEntry(prevCode)
 					If ( colour & $FF000000 <> 0 )
 						canvasArray[pixelsArrayPointer+frameIndex] = colour
 					End
@@ -413,8 +430,10 @@ Class GIFImageDecoder
 				Else
 					'Add to pixel stack
 					Local codeLen:Int = entryLengths[code]
+					Local startEntry:Int = codeTable[code]
+					
 					For Local i:Int = 0 Until codeLen
-						colour = codeEntries[codeTable[code] + i]
+						colour = codeEntries[startEntry + i]
 						If ( colour & $FF000000 <> 0 )
 							canvasArray[pixelsArrayPointer+frameIndex] = colour
 						End
@@ -428,7 +447,11 @@ Class GIFImageDecoder
 					'Add to code table
 					codeLen = entryLengths[prevCode]
 					Local prevEntryIndex:Int = codeTable[prevCode]
-					'Local newEntry:Int[] = New Int[codeLen+1]
+					
+					
+					If codeEntryIndex + codeLen >= codeEntriesSize - 1
+						ExpandCodeEntries()
+					End
 					
 					For Local i:Int = 0 Until codeLen
 						codeEntries[codeEntryIndex+i] = codeEntries[prevEntryIndex+i]
@@ -448,6 +471,10 @@ Class GIFImageDecoder
 				Local k:Int = codeEntries[prevEntryIndex]
 				Local codeLen:Int = entryLengths[prevCode]
 				Local newEntryIndex:Int = codeEntryIndex
+				
+				If newEntryIndex + codeLen >= codeEntriesSize - 1
+					ExpandCodeEntries()
+				End
 				
 				For Local i:Int = 0 Until codeLen
 					colour = codeEntries[prevEntryIndex + i]
@@ -491,6 +518,8 @@ Class GIFImageDecoder
 
 		End
         
+		'Print "Num codes used in decode: " + codeTablePointer 
+		
 		dataStream.Seek(originalOffset)
 		      
 	End
@@ -499,7 +528,8 @@ Class GIFImageDecoder
 		
 		If Not codeTable
 			codeTable = New Int[4096]
-			codeEntries = New Int[4096*8]
+			codeEntriesSize = 4096*8
+			codeEntries = New Int[codeEntriesSize]
 			entryLengths = New Int[4096]
 		End
 				
