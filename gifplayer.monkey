@@ -53,7 +53,11 @@ Class GIFPlayer
 				currFrame = gif.frames.Get(currFrameIndex)
 				currFrame.GetImageData(canvasArray)
 				
+				'Local tDiff:Int = Millisecs()
+				'Print "Frame Decode Took(ms): " + (tDiff-currMS)
+				
 				currImage.WritePixels(canvasArray,0,0,gif.Header_width,gif.Header_height)
+				'Print "Write Pixels Took(ms): " + (Millisecs()-tDiff)
 			Endif
 			
 			PushMatrix()
@@ -65,14 +69,7 @@ Class GIFPlayer
 			Translate(x + gif.Header_width/2, y + gif.Header_height/2)
 			Rotate(rotation)
 			Translate(-(x + gif.Header_width/2),-(y + gif.Header_height/2))
-      
-			'Draw previousFrames if have
-			For Local i:Int = 0 To previousFrames.Length-1
-				Local f:GIFFrame = previousFrames.Get(i)
-				'f.GetImageData( canvasArray )
-				'DrawImage(img, (x+(f.width/2)+f.left),(y+(f.height/2)+f.top))
-			Next
-			
+      			
 			'Draw actual Frame
 			
 			DrawImage(currImage, x+(currFrame.width/2)+currFrame.left,y+(currFrame.height/2)+currFrame.top)
