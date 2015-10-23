@@ -1,13 +1,17 @@
 Import mojo
+Import gifreader
 
 Class GIF
 
 	'-------------GIF Header-------------
 	'Header Block
+	'Global Color Table
+	Field Header_GCT:Int[] 'Global color table
 	Field Header_type:String
 	Field Header_version:String
 	Field Header_width:Int
 	Field Header_height:Int
+	
 	'Logical Screen Descriptor
 	Field Header_hasGlobalColorTable:Bool
 	Field Header_colorResolution:Int 'TODO
@@ -47,6 +51,9 @@ Class GIF
 End
 
 Class GIFFrame
+
+	Field parentGIF:GIF
+	
 	'-----Image Descriptor-----
 	Field left:Int
 	Field top:Int
@@ -64,20 +71,32 @@ Class GIFFrame
 	Field LCT:Int[] 'Local color table
   
 	'-----Image Data-----
+	Field dataStream:DataStream
+	Field imageDataOffset:Int
 	Field LZW_MinimumCodeSize:Int
   	Field pixelsArray:Int[]
 	
 	'Image
 	'Field img:Image
   
-	Method New(graphicControlExtension:GraphicControlExtension)
+	Method New( parentGIF:GIF, graphicControlExtension:GraphicControlExtension)
+		Self.parentGIF = parentGIF
 		Self.graphicControlExtension = graphicControlExtension
 	End
 	
+	Method GetImageData:Void( canvasArray:Int[])
+		Local decoder:GIFImageDecoder = New GIFImageDecoder()
+		decoder.DecodeImageData(dataStream, Self, canvasArray)
+	End
+	
 	Method GetImage:Image()
+		Local decoder:GIFImageDecoder = New GIFImageDecoder()
+		pixelsArray = New Int[parentGIF.Header_height * parentGIF.Header_width]
+		decoder.DecodeImageData(dataStream, Self, pixelsArray)
 		Local img:Image = CreateImage(width, height)
 		img.WritePixels(pixelsArray, 0, 0, width, height)
 		img.SetHandle(img.Width/2, img.Height/2)
+		pixelsArray = []
 		Return img
 	End
   

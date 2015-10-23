@@ -15,8 +15,7 @@ Class GifReader
 	Field loaded:Bool = False
   
 	
-	'Global Color Table
-	Field Header_GCT:Int[] 'Global color table
+	
   
 	'-------------Player Stuff-------------
 	
@@ -62,9 +61,9 @@ Class GifReader
     
 		'Global Color Table
 		If gif.Header_hasGlobalColorTable = True
-			Header_GCT = New Int[gif.Header_sizeGCT]
+			gif.Header_GCT = New Int[gif.Header_sizeGCT]
 			For Local i:Int = 0 Until gif.Header_sizeGCT
-				Header_GCT[i]=argb(gifDataStream.ReadUByte(), gifDataStream.ReadUByte(), gifDataStream.ReadUByte())
+				gif.Header_GCT[i]=argb(gifDataStream.ReadUByte(), gifDataStream.ReadUByte(), gifDataStream.ReadUByte())
 			Next
 		Endif
     
@@ -112,9 +111,10 @@ Class GifReader
 				End
 				
 			Else
+				Local decoder:GIFImageDecoder = New GIFImageDecoder()
 				
 				'Create new Frame
-				frame=New GIFFrame(tempGraphicControlExtension)
+				frame=New GIFFrame(gif, tempGraphicControlExtension)
 				
 				gif.AddFrame(frame)
         
@@ -123,8 +123,9 @@ Class GifReader
 				If frame.hasLCT
 					LocalColorTable(frame)
 				End
-				
-				ImageData(frame)
+				frame.dataStream = gifDataStream
+				decoder.SkipImageData(gifDataStream, frame)
+						
 			End
 			
 			nextByte = gifDataStream.ReadUByte()
@@ -134,188 +135,6 @@ Class GifReader
 		Print ">> Loaded <<"
 		loaded = True
 		
-	End
-  
-	'GetCode Variables
-	Field latestByte:Int = 0
-	Field latestBitIndex:Int
-	Field subBlockSize:Int
-  
-	Field blockMask:Int[] = [0,1,3,7,15,31,63,127,255,511,1023]
-	
-	Method GetCode:Int ()
-		
-		Local code:Int
-		Local i:Int = 0
-	
-		While i < codeSize
-		
-			If latestBitIndex = 8
-
-				latestByte = gifDataStream.ReadUByte()
-				latestBitIndex = 0
-				subBlockSize -= 1
-				
-				If subBlockSize = 0
-					subBlockSize = gifDataStream.ReadUByte()
-				Endif
-				
-			Endif
-			
-			Local bitsToCopy:Int = Min((codeSize-i),(8-latestBitIndex))
-			
-			'code |= ((latestByte Shr latestBitIndex) & ( blockMask[bitsToCopy] ))  Shl i
-			code |= ((latestByte Shr latestBitIndex) & ( $FFFF Shr (16-bitsToCopy) ))  Shl i
-		
-			latestBitIndex += bitsToCopy
-			i += bitsToCopy
-		
-		End
-		
-		Return code
-	End
-  
-	'ImageData Variables
-	Field pixelsArray:Int[]
-	Field pixelsArrayPointer:Int
-	Field codeSize:Int
-	Field codeTable:Int[][]
-	Field codeTablePointer:Int
-	
-	Method ImageData:Void(frame:GIFFrame)
-    
-		Local prevCode:Int
-		Local code:Int
-	
-		frame.LZW_MinimumCodeSize = gifDataStream.ReadUByte() + 1
-
-		'Initialize pixel Array
-		If( Not pixelsArray Or frame.width * frame.height > pixelsArray.Length )
-			pixelsArray = New Int[frame.width*frame.height]
-		End
-		pixelsArrayPointer=0
-    
-		'Initialize code size
-		codeSize = frame.LZW_MinimumCodeSize
-    
-		'Initialize code streamer
-		subBlockSize = gifDataStream.ReadUByte()
-		latestByte = gifDataStream.ReadUByte()
-		
-		subBlockSize -=1
-		latestBitIndex = 0
-		
-		'Initialize code table
-		If frame.hasLCT = True
-			codeTable = InitCodeTable(frame.LCT, frame.sizeLCT, frame.graphicControlExtension.transparentColor, frame.graphicControlExtension.transparentColorIndex)
-		Else
-			codeTable = InitCodeTable(Header_GCT, gif.Header_sizeGCT, frame.graphicControlExtension.transparentColor, frame.graphicControlExtension.transparentColorIndex)
-		End
-    
-		'Check if first value is equal to "Clear code"(CC)
-		If codeTable[GetCode()][0] <> CC
-			Print "ERROR: First code isn't the Clear code"
-		End
-    
-		'Get first code
-		code = GetCode()
-		prevCode = code
-		pixelsArray[pixelsArrayPointer] = codeTable[code][0]
-		pixelsArrayPointer += 1
-        
-		While True
-      
-			'Update code
-			code = GetCode()
-			
-			'Is code in code table?
-			If code < codeTablePointer
-				'Yes
-				
-				Local firstCodeValue:Int = codeTable[code][0]
-				
-				'Is End of Information (EOI)
-				If firstCodeValue = EOI Then Exit
-        
-				'Is Clear Code (CC)
-				If firstCodeValue = CC
-					'Reset code size
-					codeSize = frame.LZW_MinimumCodeSize
-		
-					'ReInit code table
-					If frame.hasLCT = True
-						codeTable = InitCodeTable(frame.LCT, frame.sizeLCT, frame.graphicControlExtension.transparentColor, frame.graphicControlExtension.transparentColorIndex)
-					Else
-						codeTable = InitCodeTable(Header_GCT, gif.Header_sizeGCT, frame.graphicControlExtension.transparentColor, frame.graphicControlExtension.transparentColorIndex)
-					Endif
-		
-					'Update old code
-					prevCode = GetCode()
-          
-					'Add to pixel stack
-					pixelsArray[pixelsArrayPointer] = codeTable[prevCode][0]
-					pixelsArrayPointer+=1
-					
-				Else
-					'Add to pixel stack
-					Local codeLen:Int = codeTable[code].Length
-					For Local i:Int = 0 Until codeLen
-						pixelsArray[pixelsArrayPointer] = codeTable[code][i]
-						pixelsArrayPointer += 1
-					End
-					
-					'Add to code table
-					codeLen = codeTable[prevCode].Length
-					
-					Local newEntry:Int[] = New Int[codeLen+1]
-					
-					For Local i:Int = 0 Until codeLen
-						newEntry[i] = codeTable[prevCode][i]
-					End
-					
-					newEntry[codeLen] = firstCodeValue
-					codeTable[codeTablePointer] = newEntry
-					codeTablePointer += 1
-					prevCode = code
-				End
-			Else
-				'No
-				'Add to pixel stack
-				Local prevEntry:Int[] = codeTable[prevCode]
-				Local k:Int = prevEntry[0]
-				Local codeLen:Int = prevEntry.Length
-				Local newEntry:Int[] = New Int[codeLen+1]
-				
-				For Local i:Int = 0 Until codeLen
-					newEntry[i] = prevEntry[i]
-					pixelsArray[pixelsArrayPointer] = prevEntry[i]
-					pixelsArrayPointer += 1
-				End
-				
-				pixelsArray[pixelsArrayPointer] = k
-				pixelsArrayPointer += 1
-				newEntry[codeLen] = k
-								
-				'Add to code table
-				prevCode = codeTablePointer
-				codeTable[codeTablePointer] = newEntry
-				codeTablePointer += 1
-				
-			End
-
-			If codeTablePointer = (1 Shl codeSize) And codeSize < 12
-				codeSize += 1
-			End
-
-		End
-              
-		'Create the image
-		frame.pixelsArray = pixelsArray[..]
-		'img = CreateImage(frame.width,frame.height)
-		'frame.img.WritePixels(pixelsArray,0,0,frame.width,frame.height)
-		'frame.img.SetHandle(frame.img.Width/2,frame.img.Height/2)
-    
-		'pixelsArray=[]
 	End
   
 	Method LocalColorTable:Void(frame:GIFFrame)
@@ -423,39 +242,297 @@ Class GifReader
 		Return result
 	End
  
-	Method InitCodeTable:Int[][](colorTable:Int[], size:Int, transparentColor:Bool, transparentColorIndex:Int)
+	
+ 
+End
+
+Class GIFImageDecoder
+	  
+	'GetCode Variables
+	Field latestByte:Int = 0
+	Field latestBitIndex:Int
+	Field subBlockSize:Int
+  
+	Field blockMask:Int[] = [0,1,3,7,15,31,63,127,255,511,1023]
+	
+	Method GetCode:Int ( dataStream:DataStream)
+		
+		Local code:Int
+		Local i:Int = 0
+	
+		While i < codeSize
+		
+			If latestBitIndex = 8
+
+				latestByte = dataStream.ReadUByte()
+				latestBitIndex = 0
+				subBlockSize -= 1
+				
+				If subBlockSize = 0
+					subBlockSize = dataStream.ReadUByte()
+				Endif
+				
+			Endif
+			
+			Local bitsToCopy:Int = Min((codeSize-i),(8-latestBitIndex))
+			
+			code |= ((latestByte Shr latestBitIndex) & ( $FFFF Shr (16-bitsToCopy) ))  Shl i
+		
+			latestBitIndex += bitsToCopy
+			i += bitsToCopy
+		
+		End
+		
+		Return code
+	End
+  
+	Method SkipImageData:Void(dataStream:DataStream, frame:GIFFrame)
+		
+		frame.imageDataOffset = dataStream.GetOffset()
+		
+		frame.LZW_MinimumCodeSize = dataStream.ReadUByte() + 1
+
+		'Initialize code size
+		codeSize = frame.LZW_MinimumCodeSize
+    
+		'Initialize code streamer
+		subBlockSize = dataStream.ReadUByte()
+		
+		While subBlockSize <> 0
+			dataStream.Seek(dataStream.GetOffset() + subBlockSize)
+			subBlockSize = dataStream.ReadUByte()
+		End
+	End
+	
+	'ImageData Variables
+	Field codeSize:Int
+	Field codeEntries:Int[]
+	Field entryLengths:Int[]
+	Field codeTable:Int[]
+	Field codeTablePointer:Int
+	
+	Method DecodeImageData:Void(dataStream:DataStream, frame:GIFFrame, canvasArray:Int[])
+    
+		Local gif:GIF = frame.parentGIF
+		Local originalOffset:Int = dataStream.GetOffset()
+		
+		dataStream.Seek(frame.imageDataOffset)
+		
+		Local pixelsArrayPointer:Int = frame.top * gif.Header_width + frame.left
+		Local canvasStride:Int = gif.Header_width
+		Local frameIndex:Int = 0
+		Local frameWidth:Int = frame.width
+		
+		Local prevCode:Int
+		Local code:Int
+		Local colour:Int
+		Local codeEntryIndex:Int
+		
+		frame.LZW_MinimumCodeSize = dataStream.ReadUByte() + 1
+
+		'Initialize code size
+		codeSize = frame.LZW_MinimumCodeSize
+    
+		'Initialize code streamer
+		subBlockSize = dataStream.ReadUByte()
+		latestByte = dataStream.ReadUByte()
+		
+		subBlockSize -=1
+		latestBitIndex = 0
+		
+		'Initialize code table
+		If frame.hasLCT = True
+			codeTable = InitCodeTable(frame.LCT, frame.sizeLCT, frame.graphicControlExtension.transparentColor, frame.graphicControlExtension.transparentColorIndex)
+		Else
+			codeTable = InitCodeTable(gif.Header_GCT, gif.Header_sizeGCT, frame.graphicControlExtension.transparentColor, frame.graphicControlExtension.transparentColorIndex)
+		End
+    
+		codeEntryIndex = codeTablePointer
+		
+		'Check if first value is equal to "Clear code"(CC)
+		If codeEntries[codeTable[GetCode( dataStream )]] <> CC
+			Print "ERROR: First code isn't the Clear code"
+		End
+    
+		'Get first code
+		code = GetCode( dataStream )
+		prevCode = code
+		
+		colour = codeEntries[codeTable[code]]
+		If ( colour & $FF000000 <> 0 )
+			canvasArray[pixelsArrayPointer+frameIndex] = colour 
+		End
+		frameIndex += 1
+		If frameIndex = frameWidth
+			pixelsArrayPointer += canvasStride
+			frameIndex = 0
+		End
+        
+		While True
+      
+			'Update code
+			code = GetCode( dataStream )
+			
+			'Is code in code table?
+			If code < codeTablePointer
+				'Yes
+				
+				Local firstCodeValue:Int = codeEntries[codeTable[code]]
+				
+				'Is End of Information (EOI)
+				If firstCodeValue = EOI Then Exit
+        
+				'Is Clear Code (CC)
+				If firstCodeValue = CC
+					'Reset code size
+					codeSize = frame.LZW_MinimumCodeSize
+		
+					'ReInit code table
+					If frame.hasLCT = True
+						codeTable = InitCodeTable(frame.LCT, frame.sizeLCT, frame.graphicControlExtension.transparentColor, frame.graphicControlExtension.transparentColorIndex)
+					Else
+						codeTable = InitCodeTable(gif.Header_GCT, gif.Header_sizeGCT, frame.graphicControlExtension.transparentColor, frame.graphicControlExtension.transparentColorIndex)
+					Endif
+		
+					codeEntryIndex = codeTablePointer
+					
+					'Update old code
+					prevCode = GetCode( dataStream )
+          
+					'Add to pixel stack
+					colour = codeEntries[codeTable[prevCode]]
+					If ( colour & $FF000000 <> 0 )
+						canvasArray[pixelsArrayPointer+frameIndex] = colour
+					End
+					frameIndex += 1
+					If frameIndex = frameWidth
+						pixelsArrayPointer += canvasStride
+						frameIndex = 0
+					End
+        
+				Else
+					'Add to pixel stack
+					Local codeLen:Int = entryLengths[code]
+					For Local i:Int = 0 Until codeLen
+						colour = codeEntries[codeTable[code] + i]
+						If ( colour & $FF000000 <> 0 )
+							canvasArray[pixelsArrayPointer+frameIndex] = colour
+						End
+						frameIndex += 1
+						If frameIndex = frameWidth
+							pixelsArrayPointer += canvasStride
+							frameIndex = 0
+						End
+        			End
+					
+					'Add to code table
+					codeLen = entryLengths[prevCode]
+					Local prevEntryIndex:Int = codeTable[prevCode]
+					'Local newEntry:Int[] = New Int[codeLen+1]
+					
+					For Local i:Int = 0 Until codeLen
+						codeEntries[codeEntryIndex+i] = codeEntries[prevEntryIndex+i]
+					End
+					
+					codeEntries[codeEntryIndex+codeLen] = firstCodeValue
+					codeTable[codeTablePointer] = codeEntryIndex
+					entryLengths[codeTablePointer] = codeLen+1
+					codeTablePointer += 1
+					codeEntryIndex += codeLen+1
+					prevCode = code
+				End
+			Else
+				'No
+				'Add to pixel stack
+				Local prevEntryIndex:Int = codeTable[prevCode]
+				Local k:Int = codeEntries[prevEntryIndex]
+				Local codeLen:Int = entryLengths[prevCode]
+				Local newEntryIndex:Int = codeEntryIndex
+				
+				For Local i:Int = 0 Until codeLen
+					colour = codeEntries[prevEntryIndex + i]
+					codeEntries[newEntryIndex + i] = colour
+					
+					If ( colour & $FF000000 <> 0 )
+						canvasArray[pixelsArrayPointer+frameIndex] = colour
+					End
+					
+					frameIndex += 1
+					
+					If frameIndex = frameWidth
+						pixelsArrayPointer += canvasStride
+						frameIndex = 0
+					End
+        		End
+				
+				colour = k
+				If ( colour & $FF000000 <> 0 )
+					canvasArray[pixelsArrayPointer+frameIndex] = colour
+				End
+				frameIndex += 1
+				If frameIndex = frameWidth
+					pixelsArrayPointer += canvasStride
+					frameIndex = 0
+				End
+				
+				codeEntries[newEntryIndex + codeLen] = k
+								
+				'Add to code table
+				prevCode = codeTablePointer
+				codeTable[codeTablePointer] = newEntryIndex
+				entryLengths[codeTablePointer] = codeLen + 1
+				codeTablePointer += 1
+				codeEntryIndex += codeLen+1
+			End
+
+			If codeTablePointer = (1 Shl codeSize) And codeSize < 12
+				codeSize += 1
+			End
+
+		End
+        
+		dataStream.Seek(originalOffset)
+		      
+	End
+
+	Method InitCodeTable:Int[](colorTable:Int[], size:Int, transparentColor:Bool, transparentColorIndex:Int)
 		
 		If Not codeTable
-			codeTable = New Int[4096][]
+			codeTable = New Int[4096]
+			codeEntries = New Int[4096*8]
+			entryLengths = New Int[4096]
 		End
 				
 		For Local i:Int = 0 Until size
-			Local color:Int[] = New Int[1]
 			If transparentColor = False
-				color[0] = colorTable[i]
+				codeEntries[i] = colorTable[i]
 			Else
 				If transparentColorIndex <> i
-					color[0] = colorTable[i]
+					codeEntries[i] = colorTable[i]
 				Else
-					color[0] = argb(0,0,0,0)'Transparent color
+					codeEntries[i] = argb(0,0,0,0)'Transparent color
 				End
 			End
-			codeTable[i] = color
+			codeTable[i] = i
+			entryLengths[i] = 1
 		End
 		
 		codeTablePointer = size
 		
 		'Add Clear Code
-		codeTable[codeTablePointer] = [CC]
+		codeTable[codeTablePointer] = codeTablePointer
+		codeEntries[codeTablePointer] = CC
+		entryLengths[codeTablePointer] = 1
 		codeTablePointer += 1
 		
 		'Add End of Information code
-		codeTable[codeTablePointer] = [EOI]
+		codeTable[codeTablePointer]	= codeTablePointer
+		codeEntries[codeTablePointer] = EOI
+		entryLengths[codeTablePointer] = 1
 		codeTablePointer += 1
     
 		Return codeTable
 	End
- 
 End
 
 '------------------------ TODO --------------------------------

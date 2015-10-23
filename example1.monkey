@@ -37,7 +37,7 @@ Class MyApp Extends App
 		preLoad = False
 	End
 	
-	Field i:=0
+	
 	Method OnRender:Int()
 	
 		Cls 0,0,255
@@ -52,7 +52,6 @@ Class MyApp Extends App
 					DrawText(comments.Get(i) , 50 , 65+(i*15))
 				Next
 			Endif
-			i+=4
 			gifPlayer.Draw(gif, 50, 100, 0, 0.5, 0.5)
 		End
 		

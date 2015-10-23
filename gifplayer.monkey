@@ -5,13 +5,21 @@ Class GIFPlayer
 	Field gif:GIF
 	Field frameStart:Int
 
-	Field actualFrameIndex:=0
-	Field actualFrame:GIFFrame
-	Field previousFrames:= New Stack<GIFFrame>
+	Field currFrameIndex:Int = 0
+	Field currFrame:GIFFrame
+	Field previousFrames:Stack<GIFFrame> = New Stack<GIFFrame>
+	Field currImage:Image
+	
+	Field canvasArray:Int[]
   
 	Method New( gif:GIF )
 		Self.gif = gif
-		actualFrame = gif.frames.Get(0)
+		canvasArray = New Int[gif.Header_height * gif.Header_width]
+		currFrame = gif.frames.Get(0)
+		currFrame.GetImageData(canvasArray)
+		currImage = CreateImage(gif.Header_width,gif.Header_height)
+		currImage.SetHandle(gif.Header_width/2,gif.Header_height/2)
+		currImage.WritePixels(canvasArray,0,0,gif.Header_width,gif.Header_height)
 	End
 	
 	Method Play:Void()
@@ -22,6 +30,32 @@ Class GIFPlayer
 		If frame < -1 Or frame > gif.GetNumberOfFrames()
 			Return
 		ElseIf frame = -1
+			Local currMS:Int = Millisecs()
+			
+			If currMS-frameStart >= currFrame.graphicControlExtension.delayTime * 10
+				frameStart = currMS
+				currFrameIndex += 1
+				If currFrameIndex = gif.GetNumberOfFrames()
+					currFrameIndex = 0
+					
+					For Local i:Int = 0 Until canvasArray.Length
+						canvasArray[i] = gif.Header_GCT[gif.Header_backgroundColorIndex]
+					End
+				Else
+					'Should add to previous frames?
+					If currFrame.graphicControlExtension.disposalMethod = 2
+						For Local i:Int = 0 Until canvasArray.Length
+							canvasArray[i] = gif.Header_GCT[gif.Header_backgroundColorIndex]
+						End
+					End
+				End
+				'Update actual frame
+				currFrame = gif.frames.Get(currFrameIndex)
+				currFrame.GetImageData(canvasArray)
+				
+				currImage.WritePixels(canvasArray,0,0,gif.Header_width,gif.Header_height)
+			Endif
+			
 			PushMatrix()
       
 			Translate(x,y)
@@ -34,37 +68,20 @@ Class GIFPlayer
       
 			'Draw previousFrames if have
 			For Local i:Int = 0 To previousFrames.Length-1
-				DrawImage(previousFrames.Get(i).GetImage(), (x+(previousFrames.Get(i).width/2)+previousFrames.Get(i).left),(y+(previousFrames.Get(i).height/2)+previousFrames.Get(i).top))
+				Local f:GIFFrame = previousFrames.Get(i)
+				'f.GetImageData( canvasArray )
+				'DrawImage(img, (x+(f.width/2)+f.left),(y+(f.height/2)+f.top))
 			Next
 			
 			'Draw actual Frame
-			DrawImage(actualFrame.GetImage(), x+(actualFrame.width/2)+actualFrame.left,y+(actualFrame.height/2)+actualFrame.top)
+			
+			DrawImage(currImage, x+(currFrame.width/2)+currFrame.left,y+(currFrame.height/2)+currFrame.top)
   
-			'Check if should change frame
-      
 			PopMatrix()
       
-			Local currMS:Int = Millisecs()
 			
-			If currMS-frameStart >= actualFrame.graphicControlExtension.delayTime * 10
-				frameStart = currMS
-				'Is last frame?
-				If actualFrameIndex < gif.GetNumberOfFrames()-1
-					'No
-					'Should add to previous frames?
-					If actualFrame.graphicControlExtension.disposalMethod = 1
-						previousFrames.Push(actualFrame)
-					Endif
-					actualFrameIndex += 1
-				Else
-					'Yes
-					previousFrames.Clear
-					actualFrameIndex = 0
-				Endif
-				'Update actual frame
-				actualFrame = gif.frames.Get(actualFrameIndex)
-			Endif
 		Else
+			Print "Draw Set Frame"
 			DrawSetFrame(gif, x, y, rotation, scaleX, scaleY, frame)
 		Endif
 	End
@@ -81,23 +98,23 @@ Class GIFPlayer
 		Rotate(rotation)
 		Translate(-(x + gif.Header_width/2),-(y + gif.Header_height/2))
     
-		If actualFrameIndex = frame
+		If currFrameIndex = frame
 			'Draw previousFrames if have
 			For Local i:Int = 0 To previousFrames.Length-1
 				DrawImage(previousFrames.Get(i).GetImage(), (x+(previousFrames.Get(i).width/2)+previousFrames.Get(i).left),(y+(previousFrames.Get(i).height/2)+previousFrames.Get(i).top))
 			Next
 			'Draw actual Frame
-			DrawImage(actualFrame.GetImage(), x+(actualFrame.width/2)+actualFrame.left,y+(actualFrame.height/2)+actualFrame.top)
+			DrawImage(currFrame.GetImage(), x+(currFrame.width/2)+currFrame.left,y+(currFrame.height/2)+currFrame.top)
 		Else
 			For Local i:Int = 0 Until frame
-				actualFrame = gif.frames.Get(i)
-				actualFrameIndex +=1
-				If actualFrame.graphicControlExtension.disposalMethod = 1
-					previousFrames.Push(actualFrame)
+				currFrame = gif.frames.Get(i)
+				currFrameIndex +=1
+				If currFrame.graphicControlExtension.disposalMethod = 1
+					previousFrames.Push(currFrame)
 				Endif
 			Next
-			actualFrameIndex = frame
-			actualFrame = gif.frames.Get(frame)
+			currFrameIndex = frame
+			currFrame = gif.frames.Get(frame)
 		Endif
 	End
 End
