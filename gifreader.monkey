@@ -1,4 +1,4 @@
-Import mojo
+Import mojo2
 Import databuffer
 Import datastream
 Import gif
@@ -14,9 +14,6 @@ Class GifReader
 	
 	Field loaded:Bool = False
   
-	
-	
-  
 	'-------------Player Stuff-------------
 	
 	Public 'Public Methods
@@ -25,7 +22,7 @@ Class GifReader
 	End
   
 	Method LoadGif:GIF(fileName:String)
-    
+	
 		'-------------GIF Header-------------
 		'Load File
 		gifDataStream = New DataStream(DataBuffer.Load("monkey://data/" + fileName), 0)
@@ -73,7 +70,7 @@ Class GifReader
 
 	End
   
-  
+  			
 
   
 	Private 'Private Methods
@@ -94,6 +91,8 @@ Class GifReader
 	
 		Local nextByte:Int = gifDataStream.ReadUByte()
 		
+		'Print "reading frames..."
+		Local i% = 0
 		While nextByte <> TRAILER_VALUE
 		
 			If nextByte = EXTENSION_INTRO 'Extension
@@ -111,6 +110,8 @@ Class GifReader
 				End
 				
 			Else
+				i+= 1
+			
 				Local decoder:GIFImageDecoder = New GIFImageDecoder()
 				
 				'Create new Frame
@@ -139,7 +140,7 @@ Class GifReader
   
 	Method LocalColorTable:Void(frame:GIFFrame)
 		frame.LCT = New Int[frame.sizeLCT]
-		
+
 		For Local i:Int = 0 Until frame.sizeLCT
 			frame.LCT[i] = argb( gifDataStream.ReadUByte(), gifDataStream.ReadUByte(), gifDataStream.ReadUByte() )
 		Next
@@ -150,7 +151,7 @@ Class GifReader
 		frame.top = gifDataStream.ReadUShort()
 		frame.width = gifDataStream.ReadUShort()
 		frame.height = gifDataStream.ReadUShort()
-		
+
 		Local packedField:Int = gifDataStream.ReadUByte()
 		
 		If packedField <> 0
@@ -325,17 +326,19 @@ Class GIFImageDecoder
 		'Print "Resized code entries to: " + codeEntriesSize
 	End
 	
-	Method DecodeImageData:Void(dataStream:DataStream, frame:GIFFrame, canvasArray:Int[])
-    
+	Method DecodeImageData:Void(dataStream:DataStream, frame:GIFFrame, canvasDataBuffer:DataBuffer) 'canvasArray:Int[])
+    	
+		
 		Local gif:GIF = frame.parentGIF
 		Local originalOffset:Int = dataStream.GetOffset()
 		
 		dataStream.Seek(frame.imageDataOffset)
-		
-		Local pixelsArrayPointer:Int = frame.top * gif.Header_width + frame.left
-		Local canvasStride:Int = gif.Header_width
-		Local frameIndex:Int = 0
-		Local frameWidth:Int = frame.width
+
+		'Local pixelsArrayPointer:Int = frame.top * gif.Header_width * 4 + frame.left
+		'Local canvasStride:Int = gif.Header_width * 4
+		'Local frameIndex:Int = 0
+		'Local frameWidth:Int = frame.width
+		Local pixelAddress:Int = 0
 		
 		Local prevCode:Int
 		Local code:Int
@@ -373,34 +376,35 @@ Class GIFImageDecoder
 		prevCode = code
 		
 		colour = GetCodeEntry(code)
-		
-		If ( colour & $FF000000 <> 0 )
-			canvasArray[pixelsArrayPointer+frameIndex] = colour 
-		End
-		
-		frameIndex += 1
-		
-		If frameIndex = frameWidth
-			pixelsArrayPointer += canvasStride
-			frameIndex = 0
-		End
+		pixelAddress = PokeColor(canvasDataBuffer, pixelAddress, colour)
         
+		
+		'Print "starting loop..."
 		While True
       
 			'Update code
 			code = GetCode( dataStream )
 			
+			If pixelAddress < 64 Then Print "  CODE : " + code
+			
 			'Is code in code table?
 			If code < codeTablePointer
 				'Yes
 				
+				If pixelAddress < 64 Then Print "      in code table"
+				
 				Local firstCodeValue:Int = GetCodeEntry(code)
 				
 				'Is End of Information (EOI)
-				If firstCodeValue = EOI Then Exit
-        
+				If firstCodeValue = EOI
+					'Print ">>> end of information"
+					Exit
+        		EndIf
+					
 				'Is Clear Code (CC)
 				If firstCodeValue = CC
+					'Print "    (Clear Code)"
+				
 					'Reset code size
 					codeSize = frame.LZW_MinimumCodeSize
 		
@@ -418,14 +422,7 @@ Class GIFImageDecoder
           
 					'Add to pixel stack
 					colour = GetCodeEntry(prevCode)
-					If ( colour & $FF000000 <> 0 )
-						canvasArray[pixelsArrayPointer+frameIndex] = colour
-					End
-					frameIndex += 1
-					If frameIndex = frameWidth
-						pixelsArrayPointer += canvasStride
-						frameIndex = 0
-					End
+					pixelAddress = PokeColor(canvasDataBuffer, pixelAddress, colour)
         
 				Else
 					'Add to pixel stack
@@ -434,20 +431,12 @@ Class GIFImageDecoder
 					
 					For Local i:Int = 0 Until codeLen
 						colour = codeEntries[startEntry + i]
-						If ( colour & $FF000000 <> 0 )
-							canvasArray[pixelsArrayPointer+frameIndex] = colour
-						End
-						frameIndex += 1
-						If frameIndex = frameWidth
-							pixelsArrayPointer += canvasStride
-							frameIndex = 0
-						End
+						pixelAddress = PokeColor(canvasDataBuffer, pixelAddress, colour)
         			End
 					
 					'Add to code table
 					codeLen = entryLengths[prevCode]
 					Local prevEntryIndex:Int = codeTable[prevCode]
-					
 					
 					If codeEntryIndex + codeLen >= codeEntriesSize - 1
 						ExpandCodeEntries()
@@ -480,27 +469,11 @@ Class GIFImageDecoder
 					colour = codeEntries[prevEntryIndex + i]
 					codeEntries[newEntryIndex + i] = colour
 					
-					If ( colour & $FF000000 <> 0 )
-						canvasArray[pixelsArrayPointer+frameIndex] = colour
-					End
-					
-					frameIndex += 1
-					
-					If frameIndex = frameWidth
-						pixelsArrayPointer += canvasStride
-						frameIndex = 0
-					End
+					pixelAddress = PokeColor(canvasDataBuffer, pixelAddress, colour)
         		End
 				
 				colour = k
-				If ( colour & $FF000000 <> 0 )
-					canvasArray[pixelsArrayPointer+frameIndex] = colour
-				End
-				frameIndex += 1
-				If frameIndex = frameWidth
-					pixelsArrayPointer += canvasStride
-					frameIndex = 0
-				End
+				pixelAddress = PokeColor(canvasDataBuffer, pixelAddress, colour)
 				
 				codeEntries[newEntryIndex + codeLen] = k
 								
@@ -522,6 +495,15 @@ Class GIFImageDecoder
 		
 		dataStream.Seek(originalOffset)
 		      
+	End
+	
+	Method PokeColor:Int(databuffer:DataBuffer, address:Int, colour:Int)
+		If ( colour & $FF000000 <> 0 )
+			databuffer.PokeInt(address, colour)
+		End
+		address += 4
+
+		Return address
 	End
 
 	Method InitCodeTable:Int[](colorTable:Int[], size:Int, transparentColor:Bool, transparentColorIndex:Int)
@@ -568,7 +550,8 @@ End
 '------------------------ TODO --------------------------------
 'Help functions and methods, I should organize this
 
+'had to switch order of b and r
 Function argb:Int(r:Int, g:Int, b:Int ,alpha:Int=255)
-	Return (alpha Shl 24) | (r Shl 16) | (g Shl 8) | b
+	Return (alpha Shl 24) | (b Shl 16) | (g Shl 8) | r
 End
 

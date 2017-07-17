@@ -1,4 +1,4 @@
-Import mojo
+Import mojo2
 Import gifreader
 
 Class GIF
@@ -74,7 +74,9 @@ Class GIFFrame
 	Field dataStream:DataStream
 	Field imageDataOffset:Int
 	Field LZW_MinimumCodeSize:Int
-  	Field pixelsArray:Int[]
+	
+  	'Field pixelsArray:Int[]
+	Field pixelsDataBuffer:DataBuffer
 	
 	'Image
 	'Field img:Image
@@ -84,19 +86,23 @@ Class GIFFrame
 		Self.graphicControlExtension = graphicControlExtension
 	End
 	
-	Method GetImageData:Void( canvasArray:Int[])
+	Method GetImageData:Void( canvasDataBuffer:DataBuffer ) 'canvasArray:Int[])
 		Local decoder:GIFImageDecoder = New GIFImageDecoder()
-		decoder.DecodeImageData(dataStream, Self, canvasArray)
+		decoder.DecodeImageData(dataStream, Self, canvasDataBuffer) 'canvasArray)
 	End
 	
 	Method GetImage:Image()
 		Local decoder:GIFImageDecoder = New GIFImageDecoder()
-		pixelsArray = New Int[parentGIF.Header_height * parentGIF.Header_width]
-		decoder.DecodeImageData(dataStream, Self, pixelsArray)
-		Local img:Image = CreateImage(width, height)
-		img.WritePixels(pixelsArray, 0, 0, width, height)
+		
+		pixelsDataBuffer = New DataBuffer(parentGIF.Header_height * parentGIF.Header_width * 4)
+		
+		decoder.DecodeImageData(dataStream, Self, pixelsDataBuffer) 'pixelsArray)
+		Local img:Image = New Image(width, height)
 		img.SetHandle(img.Width/2, img.Height/2)
-		pixelsArray = []
+		
+		img.WritePixels(0, 0, width, height, pixelsDataBuffer)
+
+		pixelsDataBuffer.Discard()
 		Return img
 	End
   

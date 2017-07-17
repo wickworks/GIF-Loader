@@ -1,6 +1,6 @@
 #IMAGE_FILES="*.png|*.jpg|*.gif|*.bmp"
 
-Import mojo
+Import mojo2
 Import gifreader
 Import gifplayer
 
@@ -10,6 +10,9 @@ Function Main:Int()
 End
 
 Class MyApp Extends App
+
+	Field canvas:Canvas
+
 	Field gif:GIF
 	Field gifPlayer:GIFPlayer
 	Field numberOfFrames:Int
@@ -21,6 +24,9 @@ Class MyApp Extends App
 	
 	Method OnCreate:Int()
 		SetUpdateRate(60)
+	
+		
+		canvas=New Canvas
 	  
 		Return 0
 	End
@@ -39,24 +45,31 @@ Class MyApp Extends App
 	
 	
 	Method OnRender:Int()
-	
-		Cls 0,0,255
+		canvas.Clear 0,0,0
+		canvas.ResetMatrix()
 		
 		If( preLoad )
-			DrawText("Tap/Click to Load GIF" , 50 , 35)
+			canvas.DrawText("Tap/Click to Load GIF" , 50 , 35)
 		Else
-			DrawText("Load Time: "+(endLoad-startLoad)+" Millisecs / "+(endLoad-startLoad)/1000+" Secs" , 50 , 35)
-			DrawText("Number of Frames: "+numberOfFrames , 50 , 50)
-			If comments And comments.Length > 0
-				For Local i:=0 Until comments.Length
-					DrawText(comments.Get(i) , 50 , 65+(i*15))
-				Next
-			Endif
-			gifPlayer.Draw(gif, 50, 100, 0, 0.5, 0.5)
+			canvas.PushMatrix()
+				canvas.DrawText("Load Time: "+(endLoad-startLoad)+" Millisecs / "+(endLoad-startLoad)/1000+" Secs" , 50 , 35)
+				canvas.DrawText("Number of Frames: "+numberOfFrames , 50 , 50)
+				If comments And comments.Length > 0
+					For Local i:=0 Until comments.Length
+						canvas.DrawText(comments.Get(i) , 50 , 65+(i*15))
+					Next
+				Endif
+			canvas.PopMatrix()
+			
+			gifPlayer.Draw(canvas, MouseX(), MouseY())', 0, 0.5, 0.5)
 		End
+		
+		canvas.Flush()
 		
 		Return 1
 	End
+	
+	
 	
 	Method OnUpdate:Int()
 		If( preLoad )
@@ -68,3 +81,4 @@ Class MyApp Extends App
 		Return 1
 	End
 End
+
